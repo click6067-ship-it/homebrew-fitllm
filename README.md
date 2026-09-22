@@ -4,6 +4,7 @@ Homebrew tap for [**fitllm**](https://github.com/click6067-ship-it/fitllm-engine
 
 ```bash
 brew tap click6067-ship-it/fitllm
+brew trust click6067-ship-it/fitllm   # required: Homebrew will not load a third-party formula without it
 brew install fitllm
 
 fitllm "Gemma 4 31b" --gpu "RTX 4090"
@@ -13,6 +14,8 @@ fitllm --top --detect
 ## Why a tap and not homebrew-core
 
 homebrew-core does not accept prebuilt binaries, and its notability bar for a self-submitted project is 225 stars / 90 forks / 90 watchers. This project does not meet that yet, so a tap is its honest home today rather than a workaround being hidden.
+
+The `brew trust` line is not optional. Current Homebrew refuses to load a formula from a third-party tap until you trust it — without that line `brew install` stops with "Refusing to load formula from untrusted tap". This is verified on every release by a macOS CI job that runs all three commands.
 
 ## What you are installing
 
