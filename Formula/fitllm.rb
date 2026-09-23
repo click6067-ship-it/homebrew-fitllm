@@ -43,3 +43,4 @@ class Fitllm < Formula
     assert_match "FITS", shell_output("#{bin}/fitllm 'Gemma 4 31b' --gpu 'RTX 5090'")
   end
 end
+# sync-path verification 2026-09-23 — the bot should revert this line
