@@ -1,0 +1,75 @@
+name: sync-formula
+
+# 이 tap 의 레시피는 손으로 쓰지 않는다. fitllm-engine 의 binaries 워크플로가 릴리스마다
+# **실제로 빌드한 바이너리의 sha256** 으로 Formula/fitllm.rb 를 생성해 릴리스 자산으로 올리고,
+# 여기서는 그 파일을 그대로 가져와 커밋한다. 사람이 URL·체크섬을 옮겨 적는 단계가 없어야
+# `brew install` 이 다른 바이트를 받거나 체크섬 에러로 죽는 일이 안 생긴다.
+#
+# 엔진이 밀어넣지 않고 이쪽에서 당겨오는 이유: push 방식은 레포를 넘나드는 쓰기 권한
+# (PAT·deploy key)이 필요한데, 당겨오면 **자기 레포에 쓰는 것**이라 기본 토큰으로 끝난다.
+# 대신 릴리스와 tap 사이에 크론 주기만큼의 지연이 생긴다 — 급하면 workflow_dispatch.
+#
+# ⚠️ GitHub 은 60일간 활동이 없는 레포의 schedule 을 자동으로 끈다. 릴리스가 그보다 뜸해지면
+# 이 크론이 조용히 멈출 수 있다. 그 경우는 fitllm-engine 의 verify-install-paths 주간 검사가
+# "tap 이 최신 릴리스보다 뒤처졌다"로 잡는다 — 검사 하나에만 의존하지 않는다.
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync-formula
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 이 레포의 Formula/fitllm.rb 를 커밋하는 데에만 쓴다
+    steps:
+      # 여기서는 checkout 이 심은 토큰으로 push 하므로 persist-credentials 를 끄지 않는다.
+      - uses: actions/checkout@v5
+
+      - name: Fetch the formula published by the latest engine release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$(gh release view --repo click6067-ship-it/fitllm-engine --json tagName --jq .tagName)"
+          echo "latest engine release: $tag"
+          gh release download "$tag" \
+            --repo click6067-ship-it/fitllm-engine \
+            --pattern fitllm.rb \
+            --dir "$RUNNER_TEMP" \
+            --clobber
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      # 받은 파일이 자기가 온 릴리스와 맞는지 먼저 본다. --clobber 로 다른 run 의 자산이
+      # 덮였거나 자산이 통째로 낡았으면, 그걸 tap 에 커밋하는 게 손으로 미는 것보다 나쁘다.
+      - name: Refuse a formula that does not match the release it came from
+        run: |
+          set -eu
+          rb="$RUNNER_TEMP/fitllm.rb"
+          grep -qx 'class Fitllm < Formula' "$rb"
+          grep -qx "  version \"${TAG#v}\"" "$rb"
+          # darwin arm64/x64 + linux arm64/x64 — formula 가 담는 타깃은 이 넷이다.
+          test "$(grep -c '^      url "' "$rb")" -eq 4
+          test "$(grep -c '^      sha256 "' "$rb")" -eq 4
+          test "$(grep -cF "/releases/download/$TAG/" "$rb")" -eq 4
+
+      - name: Commit only when the formula actually changed
+        run: |
+          set -eu
+          if cmp -s "$RUNNER_TEMP/fitllm.rb" Formula/fitllm.rb; then
+            echo "tap is already at $TAG — nothing to do"
+            exit 0
+          fi
+          cp "$RUNNER_TEMP/fitllm.rb" Formula/fitllm.rb
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/fitllm.rb
+          git commit -m "fitllm ${TAG#v} — synced from the engine release"
+          git push
